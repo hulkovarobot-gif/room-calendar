@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase'
 import WeekView from './WeekView'
 import MonthView from './MonthView'
 import BookingModal from './BookingModal'
+import BookingDetailModal from './BookingDetailModal'
 
 type View = 'week' | 'month'
 
@@ -17,6 +18,7 @@ export type Booking = {
   booked_by: string
   start_time: string
   end_time: string
+  attendees?: number
 }
 
 const FALLBACK_ROOMS: Room[] = [
@@ -66,6 +68,9 @@ export default function Calendar() {
     startTime: string
     date: string
   } | null>(null)
+  const [detailBooking, setDetailBooking] = useState<Booking | null>(null)
+  const [editingBooking, setEditingBooking] = useState<Booking | null>(null)
+  const [highlightedBookingId, setHighlightedBookingId] = useState<string | null>(null)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -116,38 +121,46 @@ export default function Calendar() {
     setView('week')
   }
 
+  function handlePillClick(date: Date, bookingId: string) {
+    handleDayClickFromMonth(date)
+    setHighlightedBookingId(bookingId)
+  }
+
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* ── Header ── */}
-      <header className="flex items-center justify-between pb-5 mb-6 border-b border-zinc-800">
+      <header
+        className="flex items-center justify-between px-5 py-4 mb-6 rounded-xl"
+        style={{ background: '#16181b', borderBottom: '2px solid #78be20' }}
+      >
         <div className="flex items-center gap-4">
           <Image
             src="/Logo.png"
             alt="Logo"
-            width={120}
-            height={40}
-            style={{ objectFit: 'contain', filter: 'brightness(1.2)' }}
+            width={130}
+            height={44}
+            style={{ objectFit: 'contain', filter: 'brightness(1.3)' }}
             priority
           />
           <div>
-            <h1 className="text-lg font-bold text-zinc-100 tracking-tight leading-none">
+            <h1 className="text-xl font-extrabold text-white tracking-tight leading-none">
               Zasedací místnosti
             </h1>
-            <p className="text-xs text-zinc-600 mt-1">Rezervační systém</p>
+            <p className="text-xs mt-1" style={{ color: '#999999' }}>Rezervační systém</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-1 p-1 bg-zinc-800/80 rounded-xl border border-zinc-700/40">
+        <div className="flex items-center gap-1 p-1 rounded-xl" style={{ background: '#2a2d31', border: '1px solid #3a3d42' }}>
           {(['week', 'month'] as View[]).map(v => (
             <button
               key={v}
               onClick={() => setView(v)}
-              className={[
-                'px-4 py-1.5 rounded-lg text-sm font-medium transition-all',
+              className="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all"
+              style={
                 view === v
-                  ? 'bg-zinc-700 text-zinc-100 shadow-sm'
-                  : 'text-zinc-500 hover:text-zinc-300',
-              ].join(' ')}
+                  ? { background: '#78be20', color: '#000000' }
+                  : { background: 'transparent', color: '#999999' }
+              }
             >
               {v === 'week' ? 'Týden' : 'Měsíc'}
             </button>
@@ -159,8 +172,8 @@ export default function Calendar() {
       {loading ? (
         <div className="flex-1 flex items-center justify-center">
           <div className="flex flex-col items-center gap-3">
-            <div className="w-5 h-5 border-2 border-zinc-700 border-t-indigo-500 rounded-full animate-spin" />
-            <span className="text-sm text-zinc-500">Načítám…</span>
+            <div className="w-5 h-5 border-2 rounded-full animate-spin" style={{ borderColor: '#3a3d42', borderTopColor: '#78be20' }} />
+            <span className="text-sm" style={{ color: '#999999' }}>Načítám…</span>
           </div>
         </div>
       ) : view === 'week' ? (
@@ -169,23 +182,28 @@ export default function Calendar() {
           bookings={bookings}
           weekStart={weekStart}
           selectedDayIdx={selectedDayIdx}
-          onDaySelect={setSelectedDayIdx}
-          onWeekChange={delta => setWeekStart(w => addDays(w, delta * 7))}
+          onDaySelect={idx => { setSelectedDayIdx(idx); setHighlightedBookingId(null) }}
+          onWeekChange={delta => { setWeekStart(w => addDays(w, delta * 7)); setHighlightedBookingId(null) }}
           onGoToday={() => {
             setWeekStart(getMonday(new Date()))
             setSelectedDayIdx(initialDayIdx())
+            setHighlightedBookingId(null)
           }}
           onBackToMonth={() => setView('month')}
           onSlotClick={(room, startTime, date) => setModalSlot({ room, startTime, date })}
+          onBookingClick={booking => setDetailBooking(booking)}
+          highlightBookingId={highlightedBookingId ?? undefined}
         />
       ) : (
         <MonthView
           bookings={bookings}
+          rooms={rooms}
           currentMonth={currentMonth}
           onMonthChange={delta =>
             setCurrentMonth(m => new Date(m.getFullYear(), m.getMonth() + delta, 1))
           }
           onDayClick={handleDayClickFromMonth}
+          onPillClick={handlePillClick}
         />
       )}
 
@@ -194,10 +212,35 @@ export default function Calendar() {
           slot={modalSlot}
           rooms={rooms}
           onClose={() => setModalSlot(null)}
-          onSuccess={() => {
-            setModalSlot(null)
-            fetchData()
+          onSuccess={() => fetchData()}
+        />
+      )}
+
+      {detailBooking && (
+        <BookingDetailModal
+          booking={detailBooking}
+          rooms={rooms}
+          onClose={() => setDetailBooking(null)}
+          onDeleted={() => { setDetailBooking(null); fetchData() }}
+          onEdit={() => {
+            const b = detailBooking
+            setDetailBooking(null)
+            setEditingBooking(b)
           }}
+        />
+      )}
+
+      {editingBooking && (
+        <BookingModal
+          slot={{
+            room: rooms.find(r => r.id === editingBooking.room_id) ?? rooms[0],
+            startTime: editingBooking.start_time.substring(11, 16),
+            date: editingBooking.start_time.substring(0, 10),
+          }}
+          rooms={rooms}
+          existingBooking={editingBooking}
+          onClose={() => setEditingBooking(null)}
+          onSuccess={() => fetchData()}
         />
       )}
     </div>
